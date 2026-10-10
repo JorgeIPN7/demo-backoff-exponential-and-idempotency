@@ -20,11 +20,12 @@ export class OrdersApiClient {
   ) {}
 
   async getPage(page: number): Promise<OrderPage> {
-    const response = await this.fetchFn(`${this.baseUrl}/orders?page=${page}`);
+    const url = `${this.baseUrl}/orders?page=${page}`;
+    const response = await this.fetchFn(url);
 
     if (!response.ok) {
       throw new OrdersApiError(
-        `GET /orders?page=${page} returned ${response.status}`,
+        `GET ${url} returned ${response.status}`,
         response.status,
         page,
       );

@@ -11,7 +11,7 @@ import {
 } from '@nestjs/common';
 import { ORDERS_DATA } from './fake-dara.js';
 
-@Controller('orders-api')
+@Controller('external-api/orders')
 export class OrdersApiController {
   private readonly requestCountPage = new Map<number, number>();
 
