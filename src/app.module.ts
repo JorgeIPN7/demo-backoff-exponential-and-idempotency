@@ -2,8 +2,8 @@ import { Module } from '@nestjs/common';
 import { createObserveModule } from '@nestjs/observe';
 import { AppController } from './app.controller.js';
 import { AppService } from './app.service.js';
-import { PedidosModule } from './pedidos/pedidos.module.js';
 import { OrdersApiModule } from './orders-api/orders-api.module.js';
+import { OrdersModule } from './orders/orders.module.js';
 
 export const { ObserveModule, ObserveInstrument } = createObserveModule();
 
@@ -16,7 +16,7 @@ export const { ObserveModule, ObserveInstrument } = createObserveModule();
       appSecret: 'YOUR_APP_SECRET',
       serviceId: 'demo-backoff-exponential-and-idempotency',
     }),
-    PedidosModule,
+    OrdersModule,
     OrdersApiModule,
   ],
   controllers: [AppController],
