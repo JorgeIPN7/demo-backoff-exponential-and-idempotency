@@ -4,14 +4,19 @@ import {
   HttpCode,
   HttpStatus,
   Post,
+  Get,
 } from '@nestjs/common';
-import type { SyncResult } from './data/order.types.js';
+import type { Order, SyncResult } from './data/order.types.js';
 import { OrdersApiError } from './orders-api.client.js';
 import { OrdersService } from './orders.service.js';
+import { OrdersStore } from './orders.store.js';
 
 @Controller('orders')
 export class OrdersController {
-  constructor(private readonly ordersService: OrdersService) {}
+  constructor(
+    private readonly ordersService: OrdersService,
+    private readonly store: OrdersStore,
+  ) {}
 
   @Post('sincronizar')
   @HttpCode(HttpStatus.OK)
@@ -24,5 +29,10 @@ export class OrdersController {
       }
       throw error;
     }
+  }
+
+  @Get()
+  findAll(): Order[] {
+    return this.store.findAll();
   }
 }

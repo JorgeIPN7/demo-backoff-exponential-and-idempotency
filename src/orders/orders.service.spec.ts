@@ -2,6 +2,7 @@ import { Logger } from '@nestjs/common';
 import type { OrderPage } from './data/order.types.js';
 import { type OrdersApiClient, OrdersApiError } from './orders-api.client.js';
 import { OrdersService } from './orders.service.js';
+import { OrdersStore } from './orders.store.js';
 
 const order = (id: string) => ({
   order_id: id,
@@ -12,8 +13,8 @@ const order = (id: string) => ({
 
 // Las páginas no son consecutivas a propósito: el servicio debe seguir next_page, no sumar 1
 const PAGES: Record<number, OrderPage> = {
-  1: { data: [order('A-1'), order('A-2')], next_page: 3 },
-  3: { data: [order('A-3')], next_page: 7 },
+  1: { data: [order('O-1'), order('O-2')], next_page: 3 },
+  3: { data: [order('O-3')], next_page: 7 },
   7: { data: [], next_page: null },
 };
 
@@ -36,27 +37,32 @@ describe('OrdersService.sincronizarPedidos', () => {
   it('recorre las páginas siguiendo next_page hasta que es null', async () => {
     const { api, requested } = fakeApi(PAGES);
 
-    const result = await new OrdersService(api).sincronizarPedidos();
+    const result = await new OrdersService(
+      api,
+      new OrdersStore(),
+    ).sincronizarPedidos();
 
     expect(requested).toEqual([1, 3, 7]);
-    expect(result.processed).toBe(3);
+    expect(result).toEqual({ processed: 3, omitted: 0, failed: 0 });
   });
 
-  it('si una página falla, propaga el error y ya no pide las siguientes', async () => {
+  it('si una página falla, propaga el error y conserva lo ya guardado', async () => {
     const { api, requested } = fakeApi(PAGES, 3);
+    const store = new OrdersStore();
 
     await expect(
-      new OrdersService(api).sincronizarPedidos(),
+      new OrdersService(api, store).sincronizarPedidos(),
     ).rejects.toBeInstanceOf(OrdersApiError);
     expect(requested).toEqual([1, 3]);
+    expect(store.findAll().map((o) => o.id)).toEqual(['O-1', 'O-2']);
   });
 
   it('se detiene si la API regresa una página que ya recorrió', async () => {
     const { api } = fakeApi({ 1: { data: [], next_page: 1 } });
 
-    await expect(new OrdersService(api).sincronizarPedidos()).rejects.toThrow(
-      'Page 1 already visited',
-    );
+    await expect(
+      new OrdersService(api, new OrdersStore()).sincronizarPedidos(),
+    ).rejects.toThrow('Page 1 already visited');
   });
 
   it('cuenta como fallido un pedido inválido sin detener la sincronización', async () => {
@@ -66,8 +72,35 @@ describe('OrdersService.sincronizarPedidos', () => {
       2: { data: [order('O-3')], next_page: null },
     });
 
-    const result = await new OrdersService(api).sincronizarPedidos();
+    const result = await new OrdersService(
+      api,
+      new OrdersStore(),
+    ).sincronizarPedidos();
 
     expect(result).toEqual({ processed: 2, omitted: 0, failed: 1 });
+  });
+
+  it('omite un order_id repetido dentro de la misma corrida', async () => {
+    const { api } = fakeApi({
+      1: { data: [order('O-1'), order('O-2')], next_page: 2 },
+      2: { data: [order('O-2'), order('O-3')], next_page: null },
+    });
+    const store = new OrdersStore();
+
+    const result = await new OrdersService(api, store).sincronizarPedidos();
+
+    expect(result).toEqual({ processed: 3, omitted: 1, failed: 0 });
+    expect(store.findAll().map((o) => o.id)).toEqual(['O-1', 'O-2', 'O-3']);
+  });
+
+  it('es idempotente: una segunda corrida no duplica nada', async () => {
+    const store = new OrdersStore();
+    const service = new OrdersService(fakeApi(PAGES).api, store);
+
+    await service.sincronizarPedidos();
+    const second = await service.sincronizarPedidos();
+
+    expect(second).toEqual({ processed: 0, omitted: 3, failed: 0 });
+    expect(store.findAll()).toHaveLength(3);
   });
 });
