@@ -1,9 +1,14 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
+import type { OrderOrigen, SyncResult } from './data/order.types.js';
+import { mapOrder } from './order.mapper.js';
 import { OrdersApiClient } from './orders-api.client.js';
-import { SyncResult } from './data/order.types.js';
+
+type OrderOutcome = keyof SyncResult;
 
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(private readonly ordersApi: OrdersApiClient) {}
 
   async sincronizarPedidos(): Promise<SyncResult> {
@@ -19,11 +24,25 @@ export class OrdersService {
 
       const { data, next_page } = await this.ordersApi.getPage(page);
 
-      result.processed += data.length;
+      for (const origin of data) {
+        result[this.processOrder(origin)]++;
+      }
 
       page = next_page;
     }
 
     return result;
+  }
+
+  private processOrder(origin: OrderOrigen): OrderOutcome {
+    try {
+      mapOrder(origin);
+      return 'processed';
+    } catch (error) {
+      this.logger.warn(
+        `Order ${origin?.order_id ?? '(no id)'} skipped: ${(error as Error).message}`,
+      );
+      return 'failed';
+    }
   }
 }
