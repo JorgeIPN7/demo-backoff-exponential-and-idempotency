@@ -1,118 +1,51 @@
-<p align="center">
-  <a href="http://nestjs.com/" target="blank"><img src="https://nestjs.com/img/logo-small.svg" width="120" alt="Nest Logo" /></a>
-</p>
+# demo-backoff-exponential-and-idempotency
 
-[circleci-image]: https://img.shields.io/circleci/build/github/nestjs/nest/master?token=abc123def456
-[circleci-url]: https://circleci.com/gh/nestjs/nest
+Ejercicio técnico, Parte B: sincronizar pedidos desde una API paginada, con reintentos, mapeo e idempotencia. Hecho con NestJS 12, TypeScript y Vitest.
 
-  <p align="center">A progressive <a href="http://nodejs.org" target="_blank">Node.js</a> framework for building efficient and scalable server-side applications.</p>
-    <p align="center">
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/v/@nestjs/core.svg" alt="NPM Version" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/l/@nestjs/core.svg" alt="Package License" /></a>
-<a href="https://www.npmjs.com/~nestjscore" target="_blank"><img src="https://img.shields.io/npm/dm/@nestjs/common.svg" alt="NPM Downloads" /></a>
-<a href="https://circleci.com/gh/nestjs/nest" target="_blank"><img src="https://img.shields.io/circleci/build/github/nestjs/nest/master" alt="CircleCI" /></a>
-<a href="https://discord.gg/G7Qnnhy" target="_blank"><img src="https://img.shields.io/badge/discord-online-brightgreen.svg" alt="Discord"/></a>
-<a href="https://opencollective.com/nest#backer" target="_blank"><img src="https://opencollective.com/nest/backers/badge.svg" alt="Backers on Open Collective" /></a>
-<a href="https://opencollective.com/nest#sponsor" target="_blank"><img src="https://opencollective.com/nest/sponsors/badge.svg" alt="Sponsors on Open Collective" /></a>
-  <a href="https://paypal.me/kamilmysliwiec" target="_blank"><img src="https://img.shields.io/badge/Donate-PayPal-ff3f59.svg" alt="Donate us"/></a>
-    <a href="https://opencollective.com/nest#sponsor"  target="_blank"><img src="https://img.shields.io/badge/Support%20us-Open%20Collective-41B883.svg" alt="Support us"></a>
-  <a href="https://twitter.com/nestframework" target="_blank"><img src="https://img.shields.io/twitter/follow/nestframework.svg?style=social&label=Follow" alt="Follow us on Twitter"></a>
-</p>
-  <!--[![Backers on Open Collective](https://opencollective.com/nest/backers/badge.svg)](https://opencollective.com/nest#backer)
-  [![Sponsors on Open Collective](https://opencollective.com/nest/sponsors/badge.svg)](https://opencollective.com/nest#sponsor)-->
+## El problema
 
-## Description
+Implementar una función `sincronizarPedidos()` que:
 
-[Nest](https://github.com/nestjs/nest) framework TypeScript starter repository.
+- Consuma una API paginada: `GET /orders?page=n` devuelve `{ "data": [...], "next_page": n|null }`.
+- Recorra todas las páginas hasta agotar `next_page`.
+- Ante 429/5xx, reintente con backoff exponencial (máx. 5 intentos); ante 4xx (salvo 429), falle claro.
+- Mapee cada pedido del esquema origen `{ order_id, customer_name, amount, source }` al interno `{ id, cliente, total_centavos, canal }` (`amount` viene en pesos con decimales; `total_centavos` es entero).
+- Garantice idempotencia: si un `order_id` ya fue procesado, no lo duplique.
+- Devuelva un resumen: procesados, omitidos (duplicados), fallidos.
 
-## Project setup
+## Cómo correrlo
+
+Requiere Node 20.19 o superior (yo lo hice con Node 24).
 
 ```bash
-$ pnpm install
+npm install
+npm test
+npm run start:dev
 ```
 
-## Compile and run the project
+Con la app arriba:
 
 ```bash
-# development
-$ pnpm run start
-
-# watch mode
-$ pnpm run start:dev
-
-# production mode
-$ pnpm run start:prod
+curl -X POST http://localhost:3000/orders/sincronizar   # sincroniza
+curl http://localhost:3000/orders                       # pedidos guardados
 ```
 
-## Run tests
+La API externa está simulada en la misma app, en `GET /external-api/orders?page=n`. La página 2 falla a propósito dos veces (503 y luego 429) para que se vean los reintentos en la consola, y los datos traen un pedido duplicado y uno con monto inválido.
 
-```bash
-# unit tests
-$ pnpm run test
+La primera corrida regresa `{"processed":5,"omitted":1,"failed":1}`. Si la vuelves a correr, `{"processed":0,"omitted":6,"failed":1}`.
 
-# e2e tests
-$ pnpm run test:e2e
+Para apuntar a otra API, define `ORDERS_API_URL` (ver `.env.example`).
 
-# test coverage
-$ pnpm run test:cov
-```
+## Decisiones
 
-## Deployment
+- API simulada con un controller: preferí que el cliente hiciera llamadas HTTP reales en lugar de leer un arreglo, así los reintentos se prueban con respuestas de verdad.
+- Reintentos: en 429, 5xx y errores de red, máximo 5 intentos en total. Si viene `Retry-After` lo respeto; si no, backoff exponencial y cualquier otro 4xx falla de inmediato con un error que dice la URL y el status.
+- Paginación: sigo `next_page` en lugar de sumar 1. Si la API regresa una página que ya visité, me detengo para no quedarme en un ciclo.
+- Centavos: `Math.round(amount * 100)`, porque en JavaScript presenta detalles con el manejo de decimales.
+- Pedidos inválidos: si falta un campo o el monto no es válido, cuenta como fallido y queda en el log, pero la sincronización sigue.
+- Idempotencia: un store en memoria (`Map` por `order_id`) que solo guarda si el id no existe.
+- Si una página falla después de los reintentos, el endpoint responde 502, porque el problema es del sistema externo. Lo ya guardado se queda y, como todo es idempotente, basta con volver a correrlo.
 
-When you're ready to deploy your NestJS application to production, there are some key steps you can take to ensure it runs as efficiently as possible. Check out the [deployment documentation](https://docs.nestjs.com/deployment) for more information.
+## Con más tiempo
 
-If you are looking for a cloud-based platform to deploy your NestJS application, check out [Mau](https://mau.nestjs.com), our official platform for deploying NestJS applications on AWS. Mau makes deployment straightforward and fast, requiring just a few simple steps:
-
-```bash
-$ pnpm install -g @nestjs/mau
-$ mau deploy
-```
-
-With Mau, you can deploy your application in just a few clicks, allowing you to focus on building features rather than managing infrastructure.
-
-## Observability
-
-In production applications, observability is essential for understanding how your system behaves, detecting issues early, and maintaining reliable performance.
-
-[NestJS Observe](https://observe.nestjs.com) automatically instruments your NestJS application, giving you deep visibility into your system with minimal setup:
-
-- **Distributed tracing:** Follow requests across services and understand how they flow through your system.
-- **Waterfall analysis:** Visualize request execution and identify slow operations, bottlenecks, and unexpected delays.
-- **Performance analysis:** Analyze application performance in real time and quickly pinpoint areas that need optimization.
-- **Metrics:** Track key application and infrastructure metrics to understand system health and performance trends.
-- **Logging:** Centralize and correlate logs with traces and other telemetry to make debugging easier.
-- **Error tracking:** Detect errors quickly and investigate their root causes with the surrounding context.
-- **SLA monitoring:** Track service-level objectives and identify when your application is approaching or exceeding defined thresholds.
-- **Alarms and alerts:** Set up alerts for critical errors, performance degradation, SLA violations, and other anomalies so your team can react quickly.
-
-This project is already instrumented. Create a free account at [observe.nestjs.com](https://observe.nestjs.com), add an application, and paste the generated app key and secret into the `ObserveModule.forRoot()` call in `src/app.module.ts`.
-
-The free plan needs no payment details and covers 300,000 events a month. You can also browse the [live demo](https://www.observe-demo.nestjs.com/dashboard) first - the whole dashboard over a busy service's data, with nothing to install.
-
-## Resources
-
-Check out a few resources that may come in handy when working with NestJS:
-
-- Visit the [NestJS Documentation](https://docs.nestjs.com) to learn more about the framework.
-- For questions and support, please visit our [Discord channel](https://discord.gg/G7Qnnhy).
-- To dive deeper and get more hands-on experience, check out our official video [courses](https://courses.nestjs.com/).
-- Deploy your application to AWS with the help of [NestJS Mau](https://mau.nestjs.com) in just a few clicks.
-- Auto-instrument your application with [NestJS Observe](https://observe.nestjs.com). Distributed tracing, metrics, and logging made easy. Error tracking and performance monitoring for your NestJS applications.
-- Visualize your application graph and interact with the NestJS application in real-time using [NestJS Devtools](https://devtools.nestjs.com).
-- Need help with your project (part-time to full-time)? Check out our official [enterprise support](https://enterprise.nestjs.com).
-- To stay in the loop and get updates, follow us on [X](https://x.com/nestframework) and [LinkedIn](https://linkedin.com/company/nestjs).
-- Looking for a job, or have a job to offer? Check out our official [Jobs board](https://jobs.nestjs.com).
-
-## Support
-
-Nest is an MIT-licensed open source project. It can grow thanks to the sponsors and support by the amazing backers. If you'd like to join them, please [read more here](https://docs.nestjs.com/support).
-
-## Stay in touch
-
-- Author - [Kamil Myśliwiec](https://twitter.com/kammysliwiec)
-- Website - [https://nestjs.com](https://nestjs.com/)
-- Twitter - [@nestframework](https://twitter.com/nestframework)
-
-## License
-
-Nest is [MIT licensed](https://github.com/nestjs/nest/blob/master/LICENSE).
+Guardaría en PostgreSQL, mandaría la sincronización a una cola para no depender de que el POST termine y validaría la forma de la respuesta de la API con Zod, no usaria Loger y usaria Pino o Windston.
